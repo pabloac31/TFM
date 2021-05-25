@@ -6,7 +6,9 @@ import seaborn as sns
 
 from sklearn.utils import shuffle
 from sklearn.model_selection import StratifiedKFold, cross_validate
-from sklearn.metrics import roc_curve, auc, confusion_matrix
+from sklearn.metrics import roc_curve, confusion_matrix, roc_auc_score, make_scorer, recall_score, precision_score
+from sklearn.metrics import auc, plot_roc_curve
+
 
 # considered features
 gen_features = ['rs6025','rs4524','rs1799963','rs1801020','rs5985','rs121909548',
@@ -170,14 +172,16 @@ def get_data(df):
   df = df[gen_features + clinical_features + target]
   print("Initial shape:", df.shape)
 
-  # remove NaNs
+  # obtain NaNs
   df = df.replace(['NoCall', 'Desconocido'], np.NaN)
   df['tipusTumor_desc'] = df['tipusTumor_desc'].replace('-', np.NaN)
-  df[['diabetesM','dislip','hta_desc']] = df[['diabetesM','dislip','hta_desc']].replace('-','No')
+  df['diabetesM'] = df['diabetesM'].replace('-','No')
+  df['dislip'] = df['dislip'].replace('-','No')
+  df['hta_desc'] = df['hta_desc'].replace('-','No')
 
+  # drop NaN values
   r, _ = np.where(df.loc[:, df.columns != 'caseAtVisit'].isna())
   idx = np.unique(r)
-
   df.drop(idx, inplace=True)
 
   # Computing the number of risk alleles for each gene
@@ -197,12 +201,8 @@ def get_data(df):
   # Preprocess clinical variables
   df.loc[:,'sexe'].replace(['Hombre','Mujer'], [0,1], inplace=True)
   df.loc[:,'diabetesM'].replace(['No','Sí'], [0,1], inplace=True)
-  df.loc[:,'fumador'].replace(['Nunca','Exfumador'], [0,1], inplace=True) ##
-  df.loc[:,'fumador'].replace('Fumador activo', 2, inplace=True) ##
-  df.loc[:,'bmi'].replace('Underweight: BMI < 18.5 Kg/m2', 0, inplace=True)
-  df.loc[:,'bmi'].replace('Normal: BMI ~ 18.5-24.9 Kg/m2', 1, inplace=True) ##
-  df.loc[:,'bmi'].replace('Overweight: BMI ~25-29.9 Kg/m2', 2, inplace=True) ##
-  df.loc[:,'bmi'].replace('Obese: BMI > 30 kg/m2', 3, inplace=True) ##
+  df.loc[:,'fumador'].replace(['Nunca','Exfumador','Fumador activo'],[0,1,2], inplace=True) ##
+  df.loc[:,'bmi'].replace(['Underweight: BMI < 18.5 Kg/m2','Normal: BMI ~ 18.5-24.9 Kg/m2','Overweight: BMI ~25-29.9 Kg/m2','Obese: BMI > 30 kg/m2'], [0,1,2,3], inplace=True)
   df.loc[:,'dislip'].replace(['No','Sí'], [0,1], inplace=True)
   df.loc[:,'hta_desc'].replace(['No','Sí'], [0,1], inplace=True)
   # df.loc[:,'khorana'] = [1 if n>=3 else 0 for n in clinical_data['khorana']]
@@ -212,11 +212,18 @@ def get_data(df):
   df['tipusTumor_esofago'] = [1 if t=='Cáncer esófago' else 0 for t in df['tipusTumor_desc']]
   df['tipusTumor_estomago'] = [1 if t=='Cáncer gástrico o de estómago' else 0 for t in df['tipusTumor_desc']]
   df.drop('tipusTumor_desc', axis=1, inplace=True)
-  df['estadiGrup_I'] = [1 if g in ['IA','IB'] else 0 for g in df['estadiGrup']] ##
-  df['estadiGrup_II'] = [1 if g in ['IIA','IIB','IIC'] else 0 for g in df['estadiGrup']] ##
-  df['estadiGrup_III'] = [1 if g in ['III','IIIA','IIIB','IIIC'] else 0 for g in df['estadiGrup']]
-  df['estadiGrup_IV'] = [1 if g in ['IV','IVA','IVB'] else 0 for g in df['estadiGrup']]
-  df.drop('estadiGrup', axis=1, inplace=True)
+  # df['estadiGrup_I'] = [1 if g in ['IA','IB'] else 0 for g in df['estadiGrup']] ##
+  # df['estadiGrup_II'] = [1 if g in ['IIA','IIB','IIC'] else 0 for g in df['estadiGrup']] ##
+  # df['estadiGrup_III'] = [1 if g in ['III','IIIA','IIIB','IIIC'] else 0 for g in df['estadiGrup']]
+  # df['estadiGrup_IV'] = [1 if g in ['IV','IVA','IVB'] else 0 for g in df['estadiGrup']]
+  # df.drop('estadiGrup', axis=1, inplace=True)
+  df.loc[:,'estadiGrup'].replace(['IA','IB'],1, inplace=True)
+  df.loc[:,'estadiGrup'].replace( ['IIA','IIB','IIC'],2, inplace=True)
+  df.loc[:,'estadiGrup'].replace(['III','IIIA','IIIB','IIIC'],3, inplace=True)
+  df.loc[:,'estadiGrup'].replace(['IV','IVA','IVB'],4, inplace=True)
+
+  df.drop('khorana', axis=1, inplace=True) # high correlated with tumour_colon
+  df.drop('rs7853989', axis=1, inplace=True) # high correlated with rs8176749
 
   X = df[df.columns.difference(target)]
   X.reset_index(drop=True, inplace=True)
@@ -229,6 +236,148 @@ def get_data(df):
   print("\nNumber of No-VTE (0) and VTE (1):", counts_elements)
 
   return X, y
+
+
+def print_summary(X, y):
+  table = pd.DataFrame()
+  VTE_n, noVTE_n = [], []
+  VTE_perc, noVTE_perc = [], []
+  col_names = []
+
+  VTE = X.loc[np.where(y==1)[0]]
+  noVTE = X.loc[np.where(y==0)[0]]
+  len_VTE, len_noVTE = len(VTE), len(noVTE)
+
+  for col in X.columns:
+    if col == 'edatDx':  # compute mean
+      VTE_n.append(VTE.loc[:,col].mean())
+      VTE_perc.append(VTE.loc[:,col].std())
+      noVTE_n.append(noVTE.loc[:,col].mean())
+      noVTE_perc.append(noVTE.loc[:,col].std())
+      col_names.append(col)
+
+    elif col == 'estadiGrup':
+      n1 = len(VTE.loc[VTE[col] == 1])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 1])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' I')
+      n1 = len(VTE.loc[VTE[col] == 2])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 2])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' II')
+      n1 = len(VTE.loc[VTE[col] == 3])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 3])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' III')
+      n1 = len(VTE.loc[VTE[col] == 4])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 4])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' IV')
+
+    elif col == 'fumador':
+      n1 = len(VTE.loc[VTE[col] == 0])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 0])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' - nunca')
+      n1 = len(VTE.loc[VTE[col] == 1])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 1])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' - exfumador')
+      n1 = len(VTE.loc[VTE[col] == 2])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 2])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' - fumador')
+
+    elif col == 'hemoglobina':
+      n1 = len(VTE.loc[VTE[col] < 10])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] < 10])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' <100g/L')
+
+    elif col == 'leucocits':
+      n1 = len(VTE.loc[VTE[col] > 11e3])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] > 11e3])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' >11e9/L')
+
+    elif col == 'plaquetes':
+      n1 = len(VTE.loc[VTE[col] > 350e3])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] > 350e3])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' >350e6/L')
+
+    elif col.startswith('rs'):
+      n1 = len(VTE.loc[VTE[col] == 0])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 0])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' - 0 risk alleles')
+      n1 = len(VTE.loc[VTE[col] == 1])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 1])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col + ' - 1 risk allele')
+
+      if col not in ['rs6025','rs121909548','rs2232698']:
+        n1 = len(VTE.loc[VTE[col] == 2])
+        VTE_n.append(n1)
+        VTE_perc.append(n1 / len_VTE)
+        n2 = len(noVTE.loc[noVTE[col] == 2])
+        noVTE_n.append(n2)
+        noVTE_perc.append(n2 / len_noVTE)
+        col_names.append(col + ' - 2 risk alleles')
+
+    else:
+      n1 = len(VTE.loc[VTE[col] == 1])
+      VTE_n.append(n1)
+      VTE_perc.append(n1 / len_VTE)
+      n2 = len(noVTE.loc[noVTE[col] == 1])
+      noVTE_n.append(n2)
+      noVTE_perc.append(n2 / len_noVTE)
+      col_names.append(col)
+
+  table['Variable'] = col_names
+  table['VTE (n)'] = list(map(int, VTE_n))
+  table['VTE (%)'] = [round(x*100,1) for x in VTE_perc]
+  table['No-VTE (n)'] = list(map(int, noVTE_n))
+  table['No-VTE (%)'] = [round(x*100,1) for x in noVTE_perc]
+
+  print()
+  print(table)
 
 
 def run_exps(models, X_train, y_train):
@@ -272,7 +421,6 @@ def results_bootstrap(final):
   results_long_nofit = results_long_nofit.sort_values(by='values')
 
   return bootstrap_df, results_long_nofit
-
 
 def plot_performances(results_long_nofit):
   # plot performance metrics from the 5-fold cross validation
@@ -339,3 +487,86 @@ def evaluate_model(y_train, y_pred_train, y_test, y_pred_test):
     print("Specificity (%):", round(specificity,4)*100)
     print("Precision (%):", round(PPV,4)*100)
     print("NPV (%):", round(NPV,4)*100)
+
+
+def test_model(clf, X, y):
+    names = []
+    means = []
+    CIs = []
+    scoring = {'AUC': make_scorer(roc_auc_score),
+               'sensitivity': make_scorer(recall_score),
+               'specificity': make_scorer(recall_score, pos_label=0),
+               'PPV': make_scorer(precision_score),
+               'NPV': make_scorer(precision_score, pos_label=0)
+                }
+
+    # 10-fold CV
+    # scores = cross_validate(clf, X, y, scoring=scoring, cv=10)
+
+    # Run classifier with cross-validation and plot ROC curves
+    cv = StratifiedKFold(n_splits=10)
+
+    tprs = []
+    aucs = []
+    mean_fpr = np.linspace(0, 1, 100)
+
+    fig, ax = plt.subplots()
+    for i, (train, test) in enumerate(cv.split(X, y)):
+        clf.fit(X[train], y[train])
+        viz = plot_roc_curve(clf, X[test], y[test],
+                             name='ROC fold {}'.format(i),
+                             alpha=0.3, lw=1, ax=ax)
+        interp_tpr = np.interp(mean_fpr, viz.fpr, viz.tpr)
+        interp_tpr[0] = 0.0
+        tprs.append(interp_tpr)
+        aucs.append(viz.roc_auc)
+
+    ax.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
+            label='Chance', alpha=.8)
+
+    mean_tpr = np.mean(tprs, axis=0)
+    mean_tpr[-1] = 1.0
+    mean_auc = auc(mean_fpr, mean_tpr)
+    std_auc = np.std(aucs)
+    ax.plot(mean_fpr, mean_tpr, color='b',
+            label=r'Mean ROC (AUC = %0.2f $\pm$ %0.2f)' % (mean_auc, std_auc),
+            lw=2, alpha=.8)
+
+    std_tpr = np.std(tprs, axis=0)
+    tprs_upper = np.minimum(mean_tpr + std_tpr, 1)
+    tprs_lower = np.maximum(mean_tpr - std_tpr, 0)
+    ax.fill_between(mean_fpr, tprs_lower, tprs_upper, color='grey', alpha=.2,
+                    label=r'$\pm$ 1 std. dev.')
+
+    ax.set(xlim=[-0.05, 1.05], ylim=[-0.05, 1.05],
+           title="Receiver operating characteristic curves")
+    ax.legend(loc="lower right", bbox_to_anchor=(1.63, 0))
+    plt.show()
+
+    # for score in scores:
+    #     if score != 'score_time':
+    #         names.append(score)
+    #         # The underlying assumption in this code is that the scores are distributed according to the Normal Distribution.
+    #         # Then the 95% confidence interval is given by mean+/- 2*std
+    #         mean, std = scores[score].mean(), scores[score].std()
+    #         means.append(round(mean,2))
+    #         CIs.append("("+str(round(mean-2*std,2))+"-"+str(round(mean+2*std,2))+")")
+    #
+    # table = pd.DataFrame()
+    # table['score'] = names
+    # table['mean'] = means
+    # table['95% CI'] = CIs
+    #
+    # return table
+
+
+def corr_heatmap(df, figsize=(35,35)):
+    correlations = df.corr()
+    ## Create color map ranging between two colors
+    cmap = sns.diverging_palette(220, 10, as_cmap=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    fig = sns.heatmap(correlations, cmap=cmap, vmax=1.0, center=0, fmt='.1f',square=True, linewidths=.5, annot=True, cbar_kws={"shrink": .75})
+    fig.set_xticklabels(fig.get_xticklabels(), rotation = 90, fontsize = 10)
+    fig.set_yticklabels(fig.get_yticklabels(), rotation = 0, fontsize = 10)
+    plt.tight_layout()
+    plt.show()
