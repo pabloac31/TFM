@@ -9,6 +9,8 @@ from sklearn.model_selection import StratifiedKFold, cross_validate
 from sklearn.metrics import roc_curve, confusion_matrix, roc_auc_score, make_scorer, recall_score, precision_score
 from sklearn.metrics import auc, plot_roc_curve
 
+from collections import defaultdict
+
 
 # considered features
 gen_features = ['rs6025','rs4524','rs1799963','rs1801020','rs5985','rs121909548',
@@ -168,8 +170,9 @@ def perm_test(data, labels, model, n=500):
 #####################################################
 #####################################################
 
-def get_data(df):
-  df = df[gen_features + clinical_features + target]
+def get_data(df, exclude=False):
+  df = df[gen_features + clinical_features + target + ['excluido']]
+  
   print("Initial shape:", df.shape)
 
   # obtain NaNs
@@ -183,6 +186,11 @@ def get_data(df):
   r, _ = np.where(df.loc[:, df.columns != 'caseAtVisit'].isna())
   idx = np.unique(r)
   df.drop(idx, inplace=True)
+    
+  if exclude:
+    df = df[df['excluido']==0]
+    
+  df.drop('excluido', axis=1, inplace=True)
 
   # Computing the number of risk alleles for each gene
   df.loc[:,'rs6025'].replace(['GG','AG'], [0,1], inplace=True)
@@ -201,8 +209,10 @@ def get_data(df):
   # Preprocess clinical variables
   df.loc[:,'sexe'].replace(['Hombre','Mujer'], [0,1], inplace=True)
   df.loc[:,'diabetesM'].replace(['No','Sí'], [0,1], inplace=True)
-  df.loc[:,'fumador'].replace(['Nunca','Exfumador','Fumador activo'],[0,1,2], inplace=True) ##
-  df.loc[:,'bmi'].replace(['Underweight: BMI < 18.5 Kg/m2','Normal: BMI ~ 18.5-24.9 Kg/m2','Overweight: BMI ~25-29.9 Kg/m2','Obese: BMI > 30 kg/m2'], [0,1,2,3], inplace=True)
+  df.loc[:,'fumador'].replace(['Nunca','Exfumador'],0, inplace=True) 
+  df.loc[:,'fumador'].replace('Fumador activo',1, inplace=True) 
+  df.loc[:,'bmi'].replace(['Underweight: BMI < 18.5 Kg/m2','Normal: BMI ~ 18.5-24.9 Kg/m2'], 0, inplace=True)
+  df.loc[:,'bmi'].replace(['Overweight: BMI ~25-29.9 Kg/m2','Obese: BMI > 30 kg/m2'], 1, inplace=True)
   df.loc[:,'dislip'].replace(['No','Sí'], [0,1], inplace=True)
   df.loc[:,'hta_desc'].replace(['No','Sí'], [0,1], inplace=True)
   # df.loc[:,'khorana'] = [1 if n>=3 else 0 for n in clinical_data['khorana']]
@@ -212,30 +222,30 @@ def get_data(df):
   df['tipusTumor_esofago'] = [1 if t=='Cáncer esófago' else 0 for t in df['tipusTumor_desc']]
   df['tipusTumor_estomago'] = [1 if t=='Cáncer gástrico o de estómago' else 0 for t in df['tipusTumor_desc']]
   df.drop('tipusTumor_desc', axis=1, inplace=True)
-  # df['estadiGrup_I'] = [1 if g in ['IA','IB'] else 0 for g in df['estadiGrup']] ##
-  # df['estadiGrup_II'] = [1 if g in ['IIA','IIB','IIC'] else 0 for g in df['estadiGrup']] ##
-  # df['estadiGrup_III'] = [1 if g in ['III','IIIA','IIIB','IIIC'] else 0 for g in df['estadiGrup']]
-  # df['estadiGrup_IV'] = [1 if g in ['IV','IVA','IVB'] else 0 for g in df['estadiGrup']]
-  # df.drop('estadiGrup', axis=1, inplace=True)
-  df.loc[:,'estadiGrup'].replace(['IA','IB'],1, inplace=True)
-  df.loc[:,'estadiGrup'].replace( ['IIA','IIB','IIC'],2, inplace=True)
-  df.loc[:,'estadiGrup'].replace(['III','IIIA','IIIB','IIIC'],3, inplace=True)
-  df.loc[:,'estadiGrup'].replace(['IV','IVA','IVB'],4, inplace=True)
+  df['estadiGrup_I_II'] = [1 if g in ['IA','IB','IIA','IIB','IIC'] else 0 for g in df['estadiGrup']] 
+  df['estadiGrup_III'] = [1 if g in ['III','IIIA','IIIB','IIIC'] else 0 for g in df['estadiGrup']]
+  df['estadiGrup_IV'] = [1 if g in ['IV','IVA','IVB'] else 0 for g in df['estadiGrup']]
+  df.drop('estadiGrup', axis=1, inplace=True)
+#   df.loc[:,'estadiGrup'].replace(['IA','IB'],1, inplace=True)
+#   df.loc[:,'estadiGrup'].replace( ['IIA','IIB','IIC'],2, inplace=True)
+#   df.loc[:,'estadiGrup'].replace(['III','IIIA','IIIB','IIIC'],3, inplace=True)
+#   df.loc[:,'estadiGrup'].replace(['IV','IVA','IVB'],4, inplace=True)
 
-  df.drop('khorana', axis=1, inplace=True) # high correlated with tumour_colon
   df.drop('rs7853989', axis=1, inplace=True) # high correlated with rs8176749
 
-  X = df[df.columns.difference(target)]
+  X = df[df.columns.difference(target + ['khorana'])]
   X.reset_index(drop=True, inplace=True)
   print("Features shape:", X.shape)
 
   y = np.array([1 if t in [0,1] else 0 for t in df['caseAtVisit']])
   print("Target shape:", y.shape)
 
+  khorana = df['khorana']
+
   unique_elements, counts_elements = np.unique(y, return_counts=True)
   print("\nNumber of No-VTE (0) and VTE (1):", counts_elements)
 
-  return X, y
+  return X, y, khorana
 
 
 def print_summary(X, y):
@@ -489,16 +499,17 @@ def evaluate_model(y_train, y_pred_train, y_test, y_pred_test):
     print("NPV (%):", round(NPV,4)*100)
 
 
-def test_model(clf, X, y):
+def test_model(clf, X, y, cutoff=0.8):
+    X = X.to_numpy()
     names = []
     means = []
     CIs = []
-    scoring = {'AUC': make_scorer(roc_auc_score),
-               'sensitivity': make_scorer(recall_score),
-               'specificity': make_scorer(recall_score, pos_label=0),
-               'PPV': make_scorer(precision_score),
-               'NPV': make_scorer(precision_score, pos_label=0)
-                }
+    # scoring = {'AUC': make_scorer(roc_auc_score),
+    #            'sensitivity': make_scorer(recall_score),
+    #            'specificity': make_scorer(recall_score, pos_label=0),
+    #            'PPV': make_scorer(precision_score),
+    #            'NPV': make_scorer(precision_score, pos_label=0)
+    #             }
 
     # 10-fold CV
     # scores = cross_validate(clf, X, y, scoring=scoring, cv=10)
@@ -508,6 +519,7 @@ def test_model(clf, X, y):
 
     tprs = []
     aucs = []
+    scores = defaultdict(list)
     mean_fpr = np.linspace(0, 1, 100)
 
     fig, ax = plt.subplots()
@@ -520,6 +532,29 @@ def test_model(clf, X, y):
         interp_tpr[0] = 0.0
         tprs.append(interp_tpr)
         aucs.append(viz.roc_auc)
+
+        y_pred_test = clf.predict_proba(X[test])[:,1]
+        fpr, tpr, thresholds = roc_curve(y[test], y_pred_test)
+        scores['AUC'].append(auc(fpr,tpr))
+        
+        # thresholds (specificity ~ 80%, as indicated in the paper)
+        idx = np.argmin(abs((1-fpr) - cutoff))
+        threshold = thresholds[idx]
+
+        # high risk: TiC-Onco risk >= threshold
+        y_hat_test = y_pred_test >= threshold
+        acc = sum(y_hat_test == y[test]) / len(y[test])
+        scores['accuracy'].append(acc)
+
+        tn, fp, fn, tp = confusion_matrix(y[test], y_hat_test).ravel()
+        sensitivity = tp / (tp+fn)
+        specificity = tn / (fp+tn)
+        PPV = tp / (tp+fp) if tp+fp > 0 else 0
+        NPV = tn / (fn+tn)
+        scores['sensitivity'].append(sensitivity)
+        scores['specificity'].append(specificity)
+        scores['PPV'].append(PPV)
+        scores['NPV'].append(NPV)
 
     ax.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
             label='Chance', alpha=.8)
@@ -543,22 +578,43 @@ def test_model(clf, X, y):
     ax.legend(loc="lower right", bbox_to_anchor=(1.63, 0))
     plt.show()
 
-    # for score in scores:
-    #     if score != 'score_time':
-    #         names.append(score)
-    #         # The underlying assumption in this code is that the scores are distributed according to the Normal Distribution.
-    #         # Then the 95% confidence interval is given by mean+/- 2*std
-    #         mean, std = scores[score].mean(), scores[score].std()
-    #         means.append(round(mean,2))
-    #         CIs.append("("+str(round(mean-2*std,2))+"-"+str(round(mean+2*std,2))+")")
-    #
-    # table = pd.DataFrame()
-    # table['score'] = names
-    # table['mean'] = means
-    # table['95% CI'] = CIs
-    #
-    # return table
+    for score in scores:
+        names.append(score)
+        # The underlying assumption in this code is that the scores are distributed according to the Normal Distribution.
+        # Then the 95% confidence interval is given by mean+/- 2*std
+        mean, std = np.mean(scores[score]), np.std(scores[score])
+        means.append(round(mean,2))
+        CIs.append("("+str(max(round(mean-2*std,2),0))+","+str(min(round(mean+2*std,2),1))+")")
+    
+    table = pd.DataFrame()
+    table['score'] = names
+    table['mean'] = means
+    table['95% CI'] = CIs
+    
+    return table
 
+
+def test_khorana(khorana, y):
+    # High risk: Khorana >= 3
+    pred_khorana = khorana >= 3
+    
+    auc_khorana = roc_auc_score(y, pred_khorana)
+    print("AUC: ", round(auc_khorana*100, 2))
+    
+    acc_khorana = sum(pred_khorana == y) / len(y)
+    print("Accuracy (%):", round(acc_khorana*100, 2))
+    
+    tn, fp, fn, tp = confusion_matrix(y, pred_khorana).ravel()
+    confusion_matrix(y, pred_khorana)
+    sensivity_khorana = tp / (tp+fn)
+    specificity_khorana = tn / (fp+tn)
+    PPV_khorana = tp / (tp+fp)
+    NPV_khorana = tn / (fn+tn) 
+    print("Sensivity (%):", round(sensivity_khorana*100,2))
+    print("Specificity (%):", round(specificity_khorana,4)*100)
+    print("PPV (%):", round(PPV_khorana,4)*100)
+    print("NPV (%):", round(NPV_khorana,4)*100)
+    
 
 def corr_heatmap(df, figsize=(35,35)):
     correlations = df.corr()
