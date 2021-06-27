@@ -172,7 +172,7 @@ def perm_test(data, labels, model, n=500):
 
 def get_data(df, exclude=False):
   df = df[gen_features + clinical_features + target + ['excluido']]
-  
+
   print("Initial shape:", df.shape)
 
   # obtain NaNs
@@ -186,10 +186,10 @@ def get_data(df, exclude=False):
   r, _ = np.where(df.loc[:, df.columns != 'caseAtVisit'].isna())
   idx = np.unique(r)
   df.drop(idx, inplace=True)
-    
+
   if exclude:
     df = df[df['excluido']==0]
-    
+
   df.drop('excluido', axis=1, inplace=True)
 
   # Computing the number of risk alleles for each gene
@@ -209,8 +209,8 @@ def get_data(df, exclude=False):
   # Preprocess clinical variables
   df.loc[:,'sexe'].replace(['Hombre','Mujer'], [0,1], inplace=True)
   df.loc[:,'diabetesM'].replace(['No','Sí'], [0,1], inplace=True)
-  df.loc[:,'fumador'].replace(['Nunca','Exfumador'],0, inplace=True) 
-  df.loc[:,'fumador'].replace('Fumador activo',1, inplace=True) 
+  df.loc[:,'fumador'].replace(['Nunca','Exfumador'],0, inplace=True)
+  df.loc[:,'fumador'].replace('Fumador activo',1, inplace=True)
   df.loc[:,'bmi'].replace(['Underweight: BMI < 18.5 Kg/m2','Normal: BMI ~ 18.5-24.9 Kg/m2'], 0, inplace=True)
   df.loc[:,'bmi'].replace(['Overweight: BMI ~25-29.9 Kg/m2','Obese: BMI > 30 kg/m2'], 1, inplace=True)
   df.loc[:,'dislip'].replace(['No','Sí'], [0,1], inplace=True)
@@ -222,7 +222,7 @@ def get_data(df, exclude=False):
   df['tipusTumor_esofago'] = [1 if t=='Cáncer esófago' else 0 for t in df['tipusTumor_desc']]
   df['tipusTumor_estomago'] = [1 if t=='Cáncer gástrico o de estómago' else 0 for t in df['tipusTumor_desc']]
   df.drop('tipusTumor_desc', axis=1, inplace=True)
-  df['estadiGrup_I_II'] = [1 if g in ['IA','IB','IIA','IIB','IIC'] else 0 for g in df['estadiGrup']] 
+  df['estadiGrup_I_II'] = [1 if g in ['IA','IB','IIA','IIB','IIC'] else 0 for g in df['estadiGrup']]
   df['estadiGrup_III'] = [1 if g in ['III','IIIA','IIIB','IIIC'] else 0 for g in df['estadiGrup']]
   df['estadiGrup_IV'] = [1 if g in ['IV','IVA','IVB'] else 0 for g in df['estadiGrup']]
   df.drop('estadiGrup', axis=1, inplace=True)
@@ -499,11 +499,30 @@ def evaluate_model(y_train, y_pred_train, y_test, y_pred_test):
     print("NPV (%):", round(NPV,4)*100)
 
 
-def test_model(clf, X, y, cutoff=0.8):
-    X = X.to_numpy()
+def generate_scores_df(scores):
     names = []
     means = []
     CIs = []
+
+    for score in scores:
+        names.append(score)
+        # The underlying assumption in this code is that the scores are distributed according to the Normal Distribution.
+        # Then the 95% confidence interval is given by mean+/- 2*std
+        mean, std = np.mean(scores[score]), np.std(scores[score])
+        means.append(round(mean,2))
+        CIs.append("("+str(max(round(mean-2*std,2),0))+","+str(min(round(mean+2*std,2),1))+")")
+
+    table = pd.DataFrame()
+    table['score'] = names
+    table['mean'] = means
+    table['95% CI'] = CIs
+
+    return table
+
+
+def test_model(clf, X, y, cutoff=0.8):
+    if not isinstance(X,np.ndarray):
+        X = X.to_numpy()
     # scoring = {'AUC': make_scorer(roc_auc_score),
     #            'sensitivity': make_scorer(recall_score),
     #            'specificity': make_scorer(recall_score, pos_label=0),
@@ -533,10 +552,13 @@ def test_model(clf, X, y, cutoff=0.8):
         tprs.append(interp_tpr)
         aucs.append(viz.roc_auc)
 
-        y_pred_test = clf.predict_proba(X[test])[:,1]
+        if hasattr(clf, 'predict_proba'):
+            y_pred_test = clf.predict_proba(X[test])[:,1]
+        else:
+            y_pred_test = clf.decision_function(X[test])
         fpr, tpr, thresholds = roc_curve(y[test], y_pred_test)
         scores['AUC'].append(auc(fpr,tpr))
-        
+
         # thresholds (specificity ~ 80%, as indicated in the paper)
         idx = np.argmin(abs((1-fpr) - cutoff))
         threshold = thresholds[idx]
@@ -578,43 +600,60 @@ def test_model(clf, X, y, cutoff=0.8):
     ax.legend(loc="lower right", bbox_to_anchor=(1.63, 0))
     plt.show()
 
-    for score in scores:
-        names.append(score)
-        # The underlying assumption in this code is that the scores are distributed according to the Normal Distribution.
-        # Then the 95% confidence interval is given by mean+/- 2*std
-        mean, std = np.mean(scores[score]), np.std(scores[score])
-        means.append(round(mean,2))
-        CIs.append("("+str(max(round(mean-2*std,2),0))+","+str(min(round(mean+2*std,2),1))+")")
-    
-    table = pd.DataFrame()
-    table['score'] = names
-    table['mean'] = means
-    table['95% CI'] = CIs
-    
-    return table
+    return generate_scores_df(scores)
 
 
 def test_khorana(khorana, y):
     # High risk: Khorana >= 3
     pred_khorana = khorana >= 3
-    
+
     auc_khorana = roc_auc_score(y, pred_khorana)
     print("AUC: ", round(auc_khorana*100, 2))
-    
+
     acc_khorana = sum(pred_khorana == y) / len(y)
     print("Accuracy (%):", round(acc_khorana*100, 2))
-    
+
     tn, fp, fn, tp = confusion_matrix(y, pred_khorana).ravel()
     confusion_matrix(y, pred_khorana)
     sensivity_khorana = tp / (tp+fn)
     specificity_khorana = tn / (fp+tn)
     PPV_khorana = tp / (tp+fp)
-    NPV_khorana = tn / (fn+tn) 
+    NPV_khorana = tn / (fn+tn)
     print("Sensivity (%):", round(sensivity_khorana*100,2))
     print("Specificity (%):", round(specificity_khorana,4)*100)
     print("PPV (%):", round(PPV_khorana,4)*100)
     print("NPV (%):", round(NPV_khorana,4)*100)
-    
+
+
+def test_khorana_bootstrap(khorana, y, n=100):
+    scores = defaultdict(list)
+
+    for i in range(n):
+        idx = np.random.choice(len(y), len(y))
+        khorana_bt = khorana[idx]
+        y_bt = y[idx]
+
+        # High risk: Khorana >= 3
+        pred_khorana = khorana_bt >= 3
+
+        auc_khorana = roc_auc_score(y_bt, pred_khorana)
+        scores['AUC'].append(auc_khorana)
+
+        acc_khorana = sum(pred_khorana == y_bt) / len(y_bt)
+        scores['accuracy'].append(acc_khorana)
+
+        tn, fp, fn, tp = confusion_matrix(y_bt, pred_khorana).ravel()
+        sensivity_khorana = tp / (tp+fn)
+        specificity_khorana = tn / (fp+tn)
+        PPV_khorana = tp / (tp+fp)
+        NPV_khorana = tn / (fn+tn)
+        scores['sensitivity'].append(sensivity_khorana)
+        scores['specificity'].append(specificity_khorana)
+        scores['PPV'].append(PPV_khorana)
+        scores['NPV'].append(NPV_khorana)
+
+    return generate_scores_df(scores)
+
 
 def corr_heatmap(df, figsize=(35,35)):
     correlations = df.corr()
@@ -626,3 +665,45 @@ def corr_heatmap(df, figsize=(35,35)):
     fig.set_yticklabels(fig.get_yticklabels(), rotation = 0, fontsize = 10)
     plt.tight_layout()
     plt.show()
+
+
+def test_model_bootstrap(clf, X, y, n=100, cutoff=0.8):
+    X = X.to_numpy()
+
+    cv = StratifiedKFold(n_splits=10)
+
+    tprs = []
+    aucs = []
+    scores = defaultdict(list)
+    mean_fpr = np.linspace(0, 1, 100)
+
+    for i in range(n):
+        idx = np.random.choice(len(X), len(X))
+        X_bt = X[idx,:]
+        y_bt = y[idx]
+        clf.fit(X_bt, y_bt)
+
+        y_pred_test = clf.predict_proba(X_bt)[:,1]
+        fpr, tpr, thresholds = roc_curve(y_bt, y_pred_test)
+        scores['AUC'].append(auc(fpr,tpr))
+
+        # thresholds (specificity ~ 80%, as indicated in the paper)
+        idx = np.argmin(abs((1-fpr) - cutoff))
+        threshold = thresholds[idx]
+
+        # high risk: TiC-Onco risk >= threshold
+        y_hat_test = y_pred_test >= threshold
+        acc = sum(y_hat_test == y_bt) / len(y_bt)
+        scores['accuracy'].append(acc)
+
+        tn, fp, fn, tp = confusion_matrix(y_bt, y_hat_test).ravel()
+        sensitivity = tp / (tp+fn)
+        specificity = tn / (fp+tn)
+        PPV = tp / (tp+fp) if tp+fp > 0 else 0
+        NPV = tn / (fn+tn)
+        scores['sensitivity'].append(sensitivity)
+        scores['specificity'].append(specificity)
+        scores['PPV'].append(PPV)
+        scores['NPV'].append(NPV)
+
+    return generate_scores_df(scores)
