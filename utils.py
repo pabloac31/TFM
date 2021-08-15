@@ -12,6 +12,9 @@ from sklearn.metrics import auc, plot_roc_curve
 from collections import defaultdict
 
 
+SEED = 1997  # for reproducibility
+
+
 # considered features
 gen_features = ['rs6025','rs4524','rs1799963','rs1801020','rs5985','rs121909548',
                         'rs2232698','rs8176719','rs7853989','rs8176749','rs8176750']
@@ -250,13 +253,14 @@ def get_data(df, exclude=False):
 
 def print_summary(X, y):
   table = pd.DataFrame()
-  VTE_n, noVTE_n = [], []
-  VTE_perc, noVTE_perc = [], []
-  col_names = []
 
   VTE = X.loc[np.where(y==1)[0]]
   noVTE = X.loc[np.where(y==0)[0]]
   len_VTE, len_noVTE = len(VTE), len(noVTE)
+
+  VTE_n, noVTE_n = [len_VTE], [len_noVTE]
+  VTE_perc, noVTE_perc = [1], [1]
+  col_names = ['N']
 
   for col in X.columns:
     if col == 'edatDx':  # compute mean
@@ -266,35 +270,35 @@ def print_summary(X, y):
       noVTE_perc.append(noVTE.loc[:,col].std())
       col_names.append(col)
 
-    elif col == 'estadiGrup':
-      n1 = len(VTE.loc[VTE[col] == 1])
-      VTE_n.append(n1)
-      VTE_perc.append(n1 / len_VTE)
-      n2 = len(noVTE.loc[noVTE[col] == 1])
-      noVTE_n.append(n2)
-      noVTE_perc.append(n2 / len_noVTE)
-      col_names.append(col + ' I')
-      n1 = len(VTE.loc[VTE[col] == 2])
-      VTE_n.append(n1)
-      VTE_perc.append(n1 / len_VTE)
-      n2 = len(noVTE.loc[noVTE[col] == 2])
-      noVTE_n.append(n2)
-      noVTE_perc.append(n2 / len_noVTE)
-      col_names.append(col + ' II')
-      n1 = len(VTE.loc[VTE[col] == 3])
-      VTE_n.append(n1)
-      VTE_perc.append(n1 / len_VTE)
-      n2 = len(noVTE.loc[noVTE[col] == 3])
-      noVTE_n.append(n2)
-      noVTE_perc.append(n2 / len_noVTE)
-      col_names.append(col + ' III')
-      n1 = len(VTE.loc[VTE[col] == 4])
-      VTE_n.append(n1)
-      VTE_perc.append(n1 / len_VTE)
-      n2 = len(noVTE.loc[noVTE[col] == 4])
-      noVTE_n.append(n2)
-      noVTE_perc.append(n2 / len_noVTE)
-      col_names.append(col + ' IV')
+    # elif col == 'estadiGrup':
+    #   n1 = len(VTE.loc[VTE[col] == 1])
+    #   VTE_n.append(n1)
+    #   VTE_perc.append(n1 / len_VTE)
+    #   n2 = len(noVTE.loc[noVTE[col] == 1])
+    #   noVTE_n.append(n2)
+    #   noVTE_perc.append(n2 / len_noVTE)
+    #   col_names.append(col + ' I')
+    #   n1 = len(VTE.loc[VTE[col] == 2])
+    #   VTE_n.append(n1)
+    #   VTE_perc.append(n1 / len_VTE)
+    #   n2 = len(noVTE.loc[noVTE[col] == 2])
+    #   noVTE_n.append(n2)
+    #   noVTE_perc.append(n2 / len_noVTE)
+    #   col_names.append(col + ' II')
+    #   n1 = len(VTE.loc[VTE[col] == 3])
+    #   VTE_n.append(n1)
+    #   VTE_perc.append(n1 / len_VTE)
+    #   n2 = len(noVTE.loc[noVTE[col] == 3])
+    #   noVTE_n.append(n2)
+    #   noVTE_perc.append(n2 / len_noVTE)
+    #   col_names.append(col + ' III')
+    #   n1 = len(VTE.loc[VTE[col] == 4])
+    #   VTE_n.append(n1)
+    #   VTE_perc.append(n1 / len_VTE)
+    #   n2 = len(noVTE.loc[noVTE[col] == 4])
+    #   noVTE_n.append(n2)
+    #   noVTE_perc.append(n2 / len_noVTE)
+    #   col_names.append(col + ' IV')
 
     elif col == 'fumador':
       n1 = len(VTE.loc[VTE[col] == 0])
@@ -370,6 +374,9 @@ def print_summary(X, y):
         noVTE_n.append(n2)
         noVTE_perc.append(n2 / len_noVTE)
         col_names.append(col + ' - 2 risk alleles')
+
+    elif col == 'khorana':
+        pass
 
     else:
       n1 = len(VTE.loc[VTE[col] == 1])
@@ -534,7 +541,7 @@ def test_model(clf, X, y, cutoff=0.8):
     # scores = cross_validate(clf, X, y, scoring=scoring, cv=10)
 
     # Run classifier with cross-validation and plot ROC curves
-    cv = StratifiedKFold(n_splits=10)
+    cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=SEED)
 
     tprs = []
     aucs = []
@@ -627,6 +634,7 @@ def test_khorana(khorana, y):
 
 def test_khorana_bootstrap(khorana, y, n=100):
     scores = defaultdict(list)
+    np.random.seed(SEED)
 
     for i in range(n):
         idx = np.random.choice(len(y), len(y))
@@ -668,14 +676,13 @@ def corr_heatmap(df, figsize=(35,35)):
 
 
 def test_model_bootstrap(clf, X, y, n=100, cutoff=0.8):
-    X = X.to_numpy()
 
-    cv = StratifiedKFold(n_splits=10)
+    X = X.to_numpy()
+    np.random.seed(SEED)
 
     tprs = []
     aucs = []
     scores = defaultdict(list)
-    mean_fpr = np.linspace(0, 1, 100)
 
     for i in range(n):
         idx = np.random.choice(len(X), len(X))
