@@ -11,10 +11,10 @@ from sklearn.metrics import auc, plot_roc_curve
 
 from collections import defaultdict
 
-#SEED = 436871  # for reproducibility
 SEED = 20896  # for reproducibility
 
 
+# prints a summary of the data
 def print_summary(X, y):
   table = pd.DataFrame()
 
@@ -161,59 +161,21 @@ def print_summary(X, y):
   print(table)
 
 
-
-def evaluate_model(y_train, y_pred_train, y_test, y_pred_test):
-
-  # compute roc curve
-  fpr, tpr, thresholds = roc_curve(y_train, y_pred_train)
-  fpr2, tpr2, thresholds2 = roc_curve(y_test, y_pred_test)
-  roc_auc = auc(fpr, tpr)
-  roc_auc2 = auc(fpr2, tpr2)
-  print("AUC score (train):", round(roc_auc,4))
-  print("AUC score (test):", round(roc_auc2,4))
-
-  plt.title('Receiver Operating Characteristic (test)')
-  plt.plot(fpr2, tpr2, 'b', label = 'AUC = %0.2f' % roc_auc2)
-  plt.legend(loc = 'lower right')
-  plt.plot([0, 1], [0, 1],'r--')
-  plt.xlim([0, 1])
-  plt.ylim([0, 1])
-  plt.ylabel('True Positive Rate')
-  plt.xlabel('False Positive Rate')
-  plt.show()
-
-  # thresholds (specificity ~ 80%, as indicated in the paper)
-  idx = np.argmin(abs((1-fpr) - 0.8))
-  idx2 = np.argmin(abs((1-fpr2) - 0.8))
-  threshold = thresholds[idx]
-  threshold2 = thresholds2[idx2]
-
-  # high risk: TiC-Onco risk >= threshold
-  y_hat_train = y_pred_train >= threshold
-  y_hat_test = y_pred_test >= threshold2
-  acc = sum(y_hat_train == y_train) / len(y_train)
-  acc2 = sum(y_hat_test == y_test) / len(y_test)
-  print("\nAccuracy in train set (%):", round(acc*100, 2))
-  print("Accuracy in test set (%):", round(acc2*100, 2))
-
-  # confusion matrix
-  for subset, y, y_hat in zip(['Train set','Test set'], [y_train,y_test], [y_hat_train,y_hat_test]):
-    print("\n=====" + subset + "=====")
-    tn, fp, fn, tp = confusion_matrix(y, y_hat).ravel()
-    print(confusion_matrix(y, y_hat))
-    print()
-
-    sensivity = tp / (tp+fn)
-    specificity = tn / (fp+tn)
-    PPV = tp / (tp+fp)
-    NPV = tn / (fn+tn)
-
-    print("Sensivity (%):", round(sensivity*100,2))
-    print("Specificity (%):", round(specificity,4)*100)
-    print("Precision (%):", round(PPV,4)*100)
-    print("NPV (%):", round(NPV,4)*100)
+# print a correlation heatmap of the variables in the dataset
+def corr_heatmap(df, figsize=(35,35)):
+    correlations = df.corr()
+    ## Create color map ranging between two colors
+    cmap = sns.diverging_palette(220, 10, as_cmap=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    fig = sns.heatmap(correlations, cmap=cmap, vmax=1.0, center=0, fmt='.1f',square=True, linewidths=.5, annot=True, cbar_kws={"shrink": .75})
+    fig.set_xticklabels(fig.get_xticklabels(), rotation = 90, fontsize = 10)
+    fig.set_yticklabels(fig.get_yticklabels(), rotation = 0, fontsize = 10)
+    plt.tight_layout()
+    plt.show()
 
 
+
+# generate a dataframe with the scores
 def generate_scores_df(scores):
     names = []
     means = []
@@ -235,6 +197,62 @@ def generate_scores_df(scores):
     return table
 
 
+# obtain the metrics for the Khorana score
+def test_khorana(khorana, y):
+    # High risk: Khorana >= 3
+    pred_khorana = khorana >= 3
+
+    auc_khorana = roc_auc_score(y, pred_khorana)
+    print("AUC: ", round(auc_khorana*100, 2))
+
+    acc_khorana = sum(pred_khorana == y) / len(y)
+    print("Accuracy (%):", round(acc_khorana*100, 2))
+
+    tn, fp, fn, tp = confusion_matrix(y, pred_khorana).ravel()
+    confusion_matrix(y, pred_khorana)
+    sensivity_khorana = tp / (tp+fn)
+    specificity_khorana = tn / (fp+tn)
+    PPV_khorana = tp / (tp+fp)
+    NPV_khorana = tn / (fn+tn)
+    print("Sensivity (%):", round(sensivity_khorana*100,2))
+    print("Specificity (%):", round(specificity_khorana,4)*100)
+    print("PPV (%):", round(PPV_khorana,4)*100)
+    print("NPV (%):", round(NPV_khorana,4)*100)
+
+
+# Test the Khorana score using the bootstrap approach (as in the paper)
+def test_khorana_bootstrap(khorana, y, n=100):
+    scores = defaultdict(list)
+    np.random.seed(SEED)
+
+    for i in range(n):
+        idx = np.random.choice(len(y), len(y))
+        khorana_bt = khorana[idx]
+        y_bt = y[idx]
+
+        # High risk: Khorana >= 3
+        pred_khorana = khorana_bt >= 3
+
+        auc_khorana = roc_auc_score(y_bt, pred_khorana)
+        scores['AUC'].append(auc_khorana)
+
+        acc_khorana = sum(pred_khorana == y_bt) / len(y_bt)
+        scores['accuracy'].append(acc_khorana)
+
+        tn, fp, fn, tp = confusion_matrix(y_bt, pred_khorana).ravel()
+        sensivity_khorana = tp / (tp+fn)
+        specificity_khorana = tn / (fp+tn)
+        PPV_khorana = tp / (tp+fp)
+        NPV_khorana = tn / (fn+tn)
+        scores['sensitivity'].append(sensivity_khorana)
+        scores['specificity'].append(specificity_khorana)
+        scores['PPV'].append(PPV_khorana)
+        scores['NPV'].append(NPV_khorana)
+
+    return generate_scores_df(scores)
+
+
+# test a model using 10-fold cross validation
 def test_model(clf, X, y, cutoff=0.8):
     if not isinstance(X,np.ndarray):
         X = X.to_numpy()
@@ -309,71 +327,8 @@ def test_model(clf, X, y, cutoff=0.8):
     return generate_scores_df(scores)
 
 
-def test_khorana(khorana, y):
-    # High risk: Khorana >= 3
-    pred_khorana = khorana >= 3
 
-    auc_khorana = roc_auc_score(y, pred_khorana)
-    print("AUC: ", round(auc_khorana*100, 2))
-
-    acc_khorana = sum(pred_khorana == y) / len(y)
-    print("Accuracy (%):", round(acc_khorana*100, 2))
-
-    tn, fp, fn, tp = confusion_matrix(y, pred_khorana).ravel()
-    confusion_matrix(y, pred_khorana)
-    sensivity_khorana = tp / (tp+fn)
-    specificity_khorana = tn / (fp+tn)
-    PPV_khorana = tp / (tp+fp)
-    NPV_khorana = tn / (fn+tn)
-    print("Sensivity (%):", round(sensivity_khorana*100,2))
-    print("Specificity (%):", round(specificity_khorana,4)*100)
-    print("PPV (%):", round(PPV_khorana,4)*100)
-    print("NPV (%):", round(NPV_khorana,4)*100)
-
-
-def test_khorana_bootstrap(khorana, y, n=100):
-    scores = defaultdict(list)
-    np.random.seed(SEED)
-
-    for i in range(n):
-        idx = np.random.choice(len(y), len(y))
-        khorana_bt = khorana[idx]
-        y_bt = y[idx]
-
-        # High risk: Khorana >= 3
-        pred_khorana = khorana_bt >= 3
-
-        auc_khorana = roc_auc_score(y_bt, pred_khorana)
-        scores['AUC'].append(auc_khorana)
-
-        acc_khorana = sum(pred_khorana == y_bt) / len(y_bt)
-        scores['accuracy'].append(acc_khorana)
-
-        tn, fp, fn, tp = confusion_matrix(y_bt, pred_khorana).ravel()
-        sensivity_khorana = tp / (tp+fn)
-        specificity_khorana = tn / (fp+tn)
-        PPV_khorana = tp / (tp+fp)
-        NPV_khorana = tn / (fn+tn)
-        scores['sensitivity'].append(sensivity_khorana)
-        scores['specificity'].append(specificity_khorana)
-        scores['PPV'].append(PPV_khorana)
-        scores['NPV'].append(NPV_khorana)
-
-    return generate_scores_df(scores)
-
-
-def corr_heatmap(df, figsize=(35,35)):
-    correlations = df.corr()
-    ## Create color map ranging between two colors
-    cmap = sns.diverging_palette(220, 10, as_cmap=True)
-    fig, ax = plt.subplots(figsize=figsize)
-    fig = sns.heatmap(correlations, cmap=cmap, vmax=1.0, center=0, fmt='.1f',square=True, linewidths=.5, annot=True, cbar_kws={"shrink": .75})
-    fig.set_xticklabels(fig.get_xticklabels(), rotation = 90, fontsize = 10)
-    fig.set_yticklabels(fig.get_yticklabels(), rotation = 0, fontsize = 10)
-    plt.tight_layout()
-    plt.show()
-
-
+# test a model using the bootstrap approach
 def test_model_bootstrap(clf, X, y, n=100, cutoff=0.8):
 
     X = X.to_numpy()
