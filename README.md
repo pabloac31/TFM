@@ -1,6 +1,6 @@
 # Master thesis
 
-[![PDF](https://img.shields.io/badge/PDF-latest-blue.svg?style=flat)](https://github.com/pabloac31/TFM/report.pdf)
+[![PDF](https://img.shields.io/badge/PDF-latest-blue.svg?style=flat)](https://github.com/pabloac31/TFM/blob/main/report.pdf)
 
 This repository contains the code and the report for the master thesis:
 
