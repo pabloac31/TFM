@@ -22,7 +22,7 @@ This breakthrough ultimately has an impact on the patient's quality of life, imp
 ## Work outline
 
 ### Data
-- The notebook ```data_preprocessing.ipynb``` is used to create the dataset (stored in  ```data/data_TiC_Onco.csv```). It also includes a simple analysis of the data.
+- The notebook ```data_preprocessing.ipynb``` is used to create the dataset we used for the experiments, which is not included here as it contains private data. It also includes a simple analysis of the data.
 
 ### Learning Using Statistical Invariants ([LUSI](https://link.springer.com/article/10.1007/s10994-018-5742-0))
 This work explores a new learning paradigm based on statistical invariants that act as a teacher during learning.
