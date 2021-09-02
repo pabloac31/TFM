@@ -5,7 +5,7 @@
 This repository contains the code and the report for the master thesis:
 
 <p align="center" style="font-size:larger;">
-<i>Predicting venous thromboembolic events in patients with cancer using a new machine learning paradigm.</i>
+<i>Predicting venous thromboembolic events in patients with cancer using a new machine learning paradigm</i>
 </p>
 
 written by Pablo Álvarez, under the supervision of Oriol Pujol Vila (UB) and José Manuel Soria (Hospital de Sant Pau), submitted to the Facultat de Matemàtiques i Informàtica of the Universitat de Barcelona.
