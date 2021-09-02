@@ -33,3 +33,16 @@ This work explores a new learning paradigm based on statistical invariants that 
 
 ### Improving the TiC-Onco risk score
 - The notebook ```improving_TiC_Onco_score.ipynb``` collects all the experiments performed with machine learning models (including SVM_I), with all the results obtained to be reviewed if necessary.
+
+## Results
+
+We developed a model based on the LUSI paradigm that improves the TiC-Onco risk score results:
+
+|             | Baseline | Ours |
+|-------------|----------|------|
+| AUC         | 0.68     | 0.71 |
+| Accuracy    | 0.71     | 0.74 |
+| Sensitivity | 0.34     | 0.49 |
+| Specificity | 0.80     | 0.80 |
+| PPV         | 0.27     | 0.34 |
+| NPV         | 0.84     | 0.87 |
