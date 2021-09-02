@@ -1,3 +1,6 @@
 .ipynb_checkpoints
 __pycache__
 overleaf_images/
+.gitattributes
+.gitignore
+data/Oncothromb_bbddMarzo2018.xlsx
